@@ -32,6 +32,13 @@ const CAM_DIR = new THREE.Vector3(1, 1.25, 1).normalize();
 const CAM_DIST = 360;
 const camera = new THREE.OrthographicCamera(-1, 1, 1, -1, 1, 1200);
 const cam = { target: new THREE.Vector3(), size: 80, mode: 'map', wantSize: 80, wantTarget: new THREE.Vector3() };
+// the driver's view: leaning out of the left of the cab, looking down the line past the chimney
+const driverCam = new THREE.PerspectiveCamera(60, 1, 0.3, 240);
+const DRIVER_EYE = new THREE.Vector3(-0.9, 6.3, -2.1);
+// look a little left of the rails so the boiler sits to one side; further left on a tall phone screen
+const driverAim = () => (cw / ch < 1 ? -4.2 : -1.3);
+const driverLook = new THREE.Vector3();
+let view = camera; // the camera we draw with
 
 scene.add(new THREE.HemisphereLight('#8a7cff', '#1c2b1c', 1.25));
 scene.add(new THREE.AmbientLight('#3a2a55', 0.5));
@@ -49,6 +56,10 @@ let cw = 1, ch = 1;
 function resize() {
   cw = canvas.clientWidth || 1; ch = canvas.clientHeight || 1;
   renderer.setSize(cw, ch, false);
+  // keep at least ~75 degrees across, so a tall phone screen still sees the track ahead
+  driverCam.aspect = cw / ch;
+  driverCam.fov = clamp(2 * Math.atan(Math.tan(75 * Math.PI / 360) / driverCam.aspect) * 180 / Math.PI, 55, 95);
+  driverCam.updateProjectionMatrix();
   if (cam.mode === 'map') cam.wantSize = mapSize();
   else cam.wantSize = followSize();
 }
@@ -457,15 +468,30 @@ document.getElementById('fsBtn').addEventListener('pointerdown', (e) => {
   else goFullscreen();
 });
 const mapBtn = document.getElementById('mapBtn');
+const driverBtn = document.getElementById('driverBtn');
 function setCamMode(m) {
   cam.mode = m;
   cam.wantSize = m === 'map' ? mapSize() : followSize();
   mapBtn.classList.toggle('on', m === 'map');
+  driverBtn.classList.toggle('on', m === 'driver');
+  const driving = m === 'driver';
+  view = driving ? driverCam : camera;
+  // the witch would be in the way of her own view, and the lantern glow would dazzle
+  engine.userData.driver.visible = !driving;
+  engine.userData.glow.visible = !driving;
+  scene.fog.near = driving ? 35 : 330;
+  scene.fog.far = driving ? 225 : 620;
+  if (driving) driverLook.copy(driverTarget());
 }
 mapBtn.addEventListener('pointerdown', (e) => {
   e.preventDefault(); e.stopPropagation();
   initAudio(); play('whee');
   setCamMode(cam.mode === 'map' ? 'follow' : 'map');
+});
+driverBtn.addEventListener('pointerdown', (e) => {
+  e.preventDefault(); e.stopPropagation();
+  initAudio(); play('whee');
+  if (S.started) setCamMode(cam.mode === 'driver' ? 'follow' : 'driver');
 });
 window.addEventListener('resize', resize);
 document.addEventListener('fullscreenchange', () => setTimeout(resize, 50));
@@ -497,7 +523,7 @@ canvas.addEventListener('pointerdown', (e) => {
   initAudio();
   const r = canvas.getBoundingClientRect();
   const ndc = new THREE.Vector2(((e.clientX - r.left) / r.width) * 2 - 1, -((e.clientY - r.top) / r.height) * 2 + 1);
-  raycaster.setFromCamera(ndc, camera);
+  raycaster.setFromCamera(ndc, view);
   const hits = raycaster.intersectObjects(proxies.filter(isShown), false);
   if (hits.length) {
     // the smallest thing under the finger wins, so a frog beats the pond it sits in
@@ -620,7 +646,8 @@ function update(dt) {
       p.obj.scale.setScalar(Math.max(0.001, appear) * P_SCALE);
       const excite = st.excite > 0.5 && !p.justArrived ? Math.abs(Math.sin(t * 7 + p.ph)) * 1.2 : 0;
       p.obj.position.y = base.y + excite + jumpY(p) + Math.max(0, Math.sin(t * 2.5 + p.ph)) * 0.15;
-      p.obj.rotation.y = FACE_CAM + Math.sin(t * 1.1 + p.ph) * 0.25;
+      const face = cam.mode === 'driver' ? Math.atan2(driverCam.position.x - p.obj.position.x, driverCam.position.z - p.obj.position.z) : FACE_CAM;
+      p.obj.rotation.y = face + Math.sin(t * 1.1 + p.ph) * 0.25;
       if (appear > 0 && appear < 1 && !p.puffed) { p.puffed = true; play('pop'); burst(base.clone().setY(2), 10, ['#b05cff', '#d9ccff']); }
     }
   }
@@ -701,7 +728,7 @@ function update(dt) {
   stopBtn.classList.toggle('on', S.mode !== 'go');
 
   // camera
-  if (cam.mode === 'follow') {
+  if (cam.mode === 'follow' || cam.mode === 'driver') {
     const look = tp(S.s - MID * 0.6 + 14 * S.v / MAXV); // lead the train a little so the camera doesn't trail behind
     cam.wantTarget.set(look.x, 0, look.z);
   } else {
@@ -713,17 +740,37 @@ function update(dt) {
   // shadows only matter close up, and skipping them keeps the zoomed-out view smooth
   moon.castShadow = cam.size < 130;
   applyCamera();
+  if (cam.mode === 'driver') updateDriverCam(dt);
 
   // speech bubbles follow what said them
   for (let i = bubbles.length - 1; i >= 0; i--) {
     const b = bubbles[i], u = (t - b.t0) / b.life;
     if (u >= 1) { b.el.remove(); bubbles.splice(i, 1); continue; }
-    const p = b.anchor().clone().project(camera);
+    const p = b.anchor().clone().project(view);
+    b.el.style.visibility = p.z > 1 ? 'hidden' : 'visible';
     const x = (p.x + 1) / 2 * cw, y = (1 - p.y) / 2 * ch;
     const pop = Math.min(1, u * 8);
     b.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -100%) scale(${pop})`;
     b.el.style.opacity = u > 0.8 ? (1 - u) * 5 : 1;
   }
+}
+function driverTarget() {
+  const f = frame(S.s + 30);
+  const aim = driverAim();
+  return new THREE.Vector3(f.x + f.rx * aim, 2.2, f.z + f.rz * aim);
+}
+function updateDriverCam(dt) {
+  driverCam.position.copy(engine.localToWorld(DRIVER_EYE.clone()));
+  // look at the track a little way ahead, smoothed so the curves feel gentle
+  driverLook.lerp(driverTarget(), 1 - Math.exp(-dt * 5));
+  driverCam.lookAt(driverLook);
+  // shadows around what the driver can see
+  const c = tp(S.s + 30), sc = moon.shadow.camera;
+  sc.left = -70; sc.right = 70; sc.top = 70; sc.bottom = -70;
+  sc.updateProjectionMatrix();
+  moon.castShadow = true;
+  moon.target.position.set(c.x, 0, c.z);
+  moon.position.set(c.x, 0, c.z).add(MOON_OFF);
 }
 function jumpY(p) {
   const u = (S.time - p.jt) / 0.5;
@@ -741,7 +788,7 @@ function loop(now) {
   const dt = Math.min(0.05, (now - last) / 1000);
   last = now;
   update(dt);
-  renderer.render(scene, camera);
+  renderer.render(scene, view);
   requestAnimationFrame(loop);
 }
 requestAnimationFrame(loop);
@@ -749,4 +796,4 @@ document.fonts && document.fonts.load('40px Creepster').then(redrawSigns).catch(
 document.body.classList.add('ready');
 
 // handy for automated tests
-window.__game = { scene, info: () => renderer.info.render, S, update, render: () => renderer.render(scene, camera), stations, pressGo, pressStop, doWhistle, setCamMode, cam, proxies, camera, wagons, engine };
+window.__game = { scene, info: () => renderer.info.render, S, update, render: () => renderer.render(scene, view), stations, pressGo, pressStop, doWhistle, setCamMode, cam, proxies, camera, wagons, engine };

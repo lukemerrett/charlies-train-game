@@ -10,7 +10,12 @@ A mouse-driven 3D Halloween model railway, made for a 3½-year-old.
 - **Red ■**: stop. Press it as the next station comes up (the button pulses and the station's mascot bounces), and the train glides to the platform.
 - **Purple ghost**: the spooky ghost whistle. Whoo-oooo!
 
-The camera follows the train from above at an angle, like looking down at a model railway on a table. The button in the top-left corner zooms out to show the whole layout, and pressing it again zooms back in. On a phone held sideways, the big buttons move to the right-hand side.
+The camera follows the train from above at an angle, like looking down at a model railway on a table. Two buttons in the top-left corner change the view:
+
+- **Train button**: ride in the driver's seat, leaning out of the cab and looking down the line past the witch-hat chimney.
+- **Loop button**: zoom out to see the whole layout.
+
+Press either button again to go back to following the train. On a phone held sideways, the big buttons move to the right-hand side.
 
 The track winds a long way round the board, through a tunnel and over a river. There are twelve stations, each with its own mascot floating above it:
 
